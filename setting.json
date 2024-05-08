@@ -1,0 +1,25 @@
+{
+    "common":{
+        "output_root": "./output",
+        "image_list_path": "./input/hoge.csv",
+        "num_class": 3,
+        "dim_embedded": 256,
+        "num_patch_per_object": 5,
+        "label_map_dict": {
+            "1": 1,
+            "2": 2
+        }
+    },
+
+    "train":{
+    },
+
+    "valid":{
+        "model_path": "./output/hoge/model_best_acc.pth",
+        "use_calculated_embedded": false,
+        "dir_calculated_embedded": "./output/hoge",
+        "knn_k": 3,
+        "data_entry_method": "Sequential",
+        "random_seed": 0
+    }
+}

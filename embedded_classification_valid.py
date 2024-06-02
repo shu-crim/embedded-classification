@@ -34,7 +34,7 @@ def embeddedCsv(output_root, image_list_path, model_path, num_class, dim_embedde
     shutil.copy(os.path.abspath(__file__), output_dir)
 
     # モデル読み込み
-    model = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
+    model = torchvision.models.resnet50()
     model.fc = nn.Sequential(
         torch.nn.Linear(model.fc.in_features, dim_embedded),
         torch.nn.Linear(dim_embedded, num_class)
@@ -167,8 +167,8 @@ def remove_value_from_list(lst, value_to_remove):
 
 def caclAccuracy(label_gt, label_estimation):
     accuracy = sklearn.metrics.accuracy_score(label_gt, label_estimation)
-    precision = sklearn.metrics.precision_score(label_gt, label_estimation, average=None, labels=[i for i in range(num_class)], zero_division=np.nan)
-    recall = sklearn.metrics.recall_score(label_gt, label_estimation, average=None, labels=[i for i in range(num_class)], zero_division=np.nan)
+    precision = sklearn.metrics.precision_score(label_gt, label_estimation, average=None, labels=[i for i in range(num_class)], zero_division=1) #zero_division=1として対策優先度を下げる
+    recall = sklearn.metrics.recall_score(label_gt, label_estimation, average=None, labels=[i for i in range(num_class)], zero_division=1) #zero_division=1として対策優先度を下げる
     confusion_matrix = sklearn.metrics.confusion_matrix(label_gt, label_estimation, labels=[i for i in range(num_class)])
 
     return accuracy, precision, recall, confusion_matrix

@@ -100,7 +100,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
         accuracy_train = sklearn.metrics.accuracy_score(Y, pred)
         print("---------------- Train ----------------")
         print(f'Average Train loss: {total_loss / total_size:.6f}')
-        print(sklearn.metrics.classification_report(Y, pred, zero_division=np.nan))
+        print(sklearn.metrics.classification_report(Y, pred, zero_division=0))
         print(sklearn.metrics.confusion_matrix(Y, pred))
 
         # debug
@@ -114,6 +114,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
         Y = []
         total_loss = 0
         total_size = 0
+        model.eval()
         for i, (data, target) in enumerate(val_loader):
             with torch.no_grad():
                 data, target = data.to(device), target.to(device)
@@ -127,7 +128,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
         accuracy_valid = sklearn.metrics.accuracy_score(Y, pred)
         print("---------------- Valid ----------------")
         print(f'Average Valid loss: {total_loss / total_size:.6f}')
-        print(sklearn.metrics.classification_report(Y, pred, zero_division=np.nan))
+        print(sklearn.metrics.classification_report(Y, pred, zero_division=0))
         print(sklearn.metrics.confusion_matrix(Y, pred))
 
         if loss_valid < min_valid_loss:
@@ -168,9 +169,10 @@ if __name__ == '__main__':
 
     # outputディレクトリ作成
     now = datetime.datetime.now()
-    output_dir = os.path.join(output_root, now.strftime('%Y%m%d_%H%M%S_train'))
+    output_dir = os.path.join(output_root, now.strftime('%Y%m%d_%H%M%S_train') + f"_{os.path.basename(image_list_path).split('.')[0]}")
     os.makedirs(output_dir)
     shutil.copy(os.path.abspath(__file__), output_dir)
+    shutil.copy(image_list_path, output_dir)
 
     # train実行
     train(num_epoch=30, output_dir=output_dir, num_class=num_class, dim_embedded=dim_embedded)

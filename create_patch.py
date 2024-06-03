@@ -4,7 +4,8 @@ import os
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
-
+import json
+import datetime
 
 class Patch:
     label: int
@@ -77,7 +78,7 @@ def Patches(img_label:np.ndarray, th_area=250, patch_width=224, patch_num_per_ob
     return patches
 
 
-def patchImage(src_img:np.ndarray, label_img:np.ndarray, patch:Patch) -> np.ndarray:
+def patchImage(src_img:np.ndarray, label_img:np.ndarray, patch:Patch, fill_others_gray:bool=False, fill_lumi:np.uint8=127) -> np.ndarray:
     if src_img.shape[0] != label_img.shape[0] or src_img.shape[1] != label_img.shape[1]:
         raise
 
@@ -126,12 +127,24 @@ def patchImage(src_img:np.ndarray, label_img:np.ndarray, patch:Patch) -> np.ndar
     patch_img[dst_top:dst_bottom, dst_left:dst_right] = src_img[src_top:src_bottom, src_left:src_right]
     patch_label[dst_top:dst_bottom, dst_left:dst_right] = label_img[src_top:src_bottom, src_left:src_right]
 
+    if fill_others_gray:
+        fill_mask = np.logical_and(patch_label != patch.label, patch_label != 0) # 対象のlabelでもラベル0でもない領域
+        patch_img[fill_mask] = fill_lumi
+
     # return patch_img, patch_label
     return patch_img
     
 
-input_dir = r"./data"
-output_dir = r"./output"
+# 設定を読み込む
+with open('setting.json', 'r', encoding="utf-8") as f:
+    setting = json.load(f)
+
+input_dir = setting["create_patch"]["input_dir"]
+output_root = setting["common"]["output_root"]
+fill_others_gray = setting["create_patch"]["fill_others_gray"]
+
+output_dir = os.path.join(output_root, datetime.datetime.now().strftime('%Y%m%d_%H%M%S') + f"_patch_{os.path.basename(input_dir)}")
+os.makedirs(output_dir)
 
 png_paths = glob.glob(os.path.join(input_dir, "*_rgb.png"))
 # print(png_paths)
@@ -153,7 +166,7 @@ for png_path in png_paths:
     num_patch = 0
     for patch in patches:
         patch:Patch = patch
-        patch_img = patchImage(img_src, img_label, patch)
+        patch_img = patchImage(img_src, img_label, patch, fill_others_gray=True)
         # plt.imshow(patch_img)
         # plt.show()
         Image.fromarray(patch_img, img_src_pil.mode).save(os.path.join(output_dir, os.path.basename(png_path).replace("_rgb.png", f"_{num_patch:06}_{patch.label:03}.png")))

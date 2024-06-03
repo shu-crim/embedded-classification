@@ -57,8 +57,8 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
         sys.stdout = original_stdout # 標準出力を元に戻す
 
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=False)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=2, persistent_workers=True, pin_memory=True)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=2, persistent_workers=True, pin_memory=True)
 
     torch.backends.cudnn.benchmark = True
     device = torch.device('cuda')
@@ -79,6 +79,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
         model.train()
         pred = []
         Y = []
+        timestamp = datetime.datetime.now().timestamp()
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
@@ -96,6 +97,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
                 print('Train Epoch: {} [{}/{} ({:.0f}%)]\tAverage loss: {:.6f}'.format(
                     epoch, batch_idx * len(data), len(train_loader.dataset),
                     100. * batch_idx / len(train_loader), total_loss / total_size))
+        print(f"学習時間: {datetime.datetime.now().timestamp() - timestamp:.3f} s")
         loss_train = total_loss / total_size
         accuracy_train = sklearn.metrics.accuracy_score(Y, pred)
         print("---------------- Train ----------------")
@@ -115,6 +117,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
         total_loss = 0
         total_size = 0
         model.eval()
+        timestamp = datetime.datetime.now().timestamp()
         for i, (data, target) in enumerate(val_loader):
             with torch.no_grad():
                 data, target = data.to(device), target.to(device)
@@ -124,6 +127,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
                 total_size += data.size(0)
             pred += [int(l.argmax()) for l in output]
             Y += [int(l) for l in target]
+        print(f"検証時間: {datetime.datetime.now().timestamp() - timestamp:.3f} s")
         loss_valid = total_loss / total_size
         accuracy_valid = sklearn.metrics.accuracy_score(Y, pred)
         print("---------------- Valid ----------------")
@@ -140,6 +144,9 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
             epoch_max_valid_acc = epoch
             # モデルを保存する。
             torch.save(model.state_dict(), os.path.join(output_dir, "model_best_acc.pth"))
+
+        # モデルを保存する。
+        torch.save(model.state_dict(), os.path.join(output_dir, f"model_epoch_{epoch:06}.pth"))
 
         if not os.path.exists(os.path.join(output_dir, "loss.csv")):
             with open(os.path.join(output_dir, "loss.csv"), "w") as f:

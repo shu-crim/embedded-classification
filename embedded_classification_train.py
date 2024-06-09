@@ -9,6 +9,7 @@ import datetime
 import shutil
 import csv
 import json
+from enum import Enum
 
 import torch.nn as nn
 import torch.optim as optim
@@ -155,19 +156,63 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
             f.write(f"{epoch},{loss_train},{loss_valid},{accuracy_train},{accuracy_valid},{min_valid_loss},{epoch_min_valid_loss},{max_valid_acc},{epoch_max_valid_acc}\n")
 
 
-if __name__ == '__main__':
+class DataEntryMethod(Enum):
+    NotRandomSequential = 1, # データセットの順でそのまま登録
+    Sequential = 2, # ランダムな順で登録
+    ClassBreadthFirst = 3, # 各クラスを横断的な順で登録
+    PrecisionRecallBottleneck = 4, # P/Rが最低値なクラスについてP/Rを上げるデータを動的に選択して登録(Recallを上げる際のデータ選択はランダム)
+
+def readSetting(path = 'setting.json'):
     # 設定を読み込む
-    with open('setting.json', 'r') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         setting = json.load(f)
+
+    setting["common"]["num_class"] = num_class = int(setting["common"]["num_class"])
+    setting["common"]["dim_embedded"] = int(setting["common"]["dim_embedded"])
+    setting["common"]["num_patch_per_object"] = int(setting["common"]["num_patch_per_object"])
+
+    label_map_dict_raw = setting["common"]["label_map_dict"]
+    setting["common"]["label_map_dict"] = {}
+    for key, value in label_map_dict_raw.items():
+        setting["common"]["label_map_dict"][int(key)] = value
+
+    label_name_dict = setting["common"]["label_name_dict"]
+    setting["common"]["label_name_dict"] = {}
+    for key, value in label_name_dict.items():
+        setting["common"]["label_name_dict"][int(key)] = value
+
+    setting["valid"]["knn_k"] = int(setting["valid"]["knn_k"])
+    setting["valid"]["random_seed"] = int(setting["valid"]["random_seed"])
+    setting["valid"]["num_run_valid"] = int(setting["valid"]["num_run_valid"])
+    setting["valid"]["round_run_valid"] = int(setting["valid"]["round_run_valid"])
+
+    data_entry_method = setting["valid"]["data_entry_method"]
+    if data_entry_method == "NotRandomSequential":
+        setting["valid"]["data_entry_method"] = DataEntryMethod.NotRandomSequential
+    elif data_entry_method == "Sequential":
+        setting["valid"]["data_entry_method"] = DataEntryMethod.Sequential
+    elif data_entry_method == "ClassBreadthFirst":
+        setting["valid"]["data_entry_method"] = DataEntryMethod.ClassBreadthFirst
+    elif data_entry_method == "PrecisionRecallBottleneck":
+        setting["valid"]["data_entry_method"] = DataEntryMethod.PrecisionRecallBottleneck
+    else:
+        setting["valid"]["data_entry_method"] = DataEntryMethod.Sequential
+
+    setting["combine"]["stats_start_row"] = int(setting["combine"]["stats_start_row"])
+    setting["combine"]["stats_start_col"] = int(setting["combine"]["stats_start_col"])
+
+    return setting
+
+
+if __name__ == '__main__':
+    SETTING_FILE_NAME = 'setting.json'
+    setting = readSetting(SETTING_FILE_NAME)
 
     output_root = setting["common"]["output_root"]
     image_list_path = setting["common"]["image_list_path"]
-    num_class = int(setting["common"]["num_class"])
-    dim_embedded = int(setting["common"]["dim_embedded"])
-    label_map_dict_raw = setting["common"]["label_map_dict"]
-    label_map_dict = {}
-    for key, value in label_map_dict_raw.items():
-        label_map_dict[int(key)] = value
+    num_class = setting["common"]["num_class"]
+    dim_embedded = setting["common"]["dim_embedded"]
+    label_map_dict = setting["common"]["label_map_dict"]
 
     # データセット作成
     train_dataset, val_dataset = loadDataset(image_list_path, label_map_dict)
@@ -180,6 +225,7 @@ if __name__ == '__main__':
     os.makedirs(output_dir)
     shutil.copy(os.path.abspath(__file__), output_dir)
     shutil.copy(image_list_path, output_dir)
+    shutil.copy(SETTING_FILE_NAME, output_dir)
 
     # train実行
-    train(num_epoch=30, output_dir=output_dir, num_class=num_class, dim_embedded=dim_embedded)
+    train(num_epoch=50, output_dir=output_dir, num_class=num_class, dim_embedded=dim_embedded)

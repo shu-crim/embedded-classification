@@ -17,13 +17,10 @@ import sklearn.metrics
 import random
 import json
 from enum import Enum
+from multiprocessing import Process
+import time
 
-
-class DataEntryMethod(Enum):
-    NotRandomSequential = 1, # データセットの順でそのまま登録
-    Sequential = 2, # ランダムな順で登録
-    ClassBreadthFirst = 3, # 各クラスを横断的な順で登録
-    PrecisionRecallBottleneck = 4, # P/Rが最低値なクラスについてP/Rを上げるデータを動的に選択して登録(Recallを上げる際のデータ選択はランダム)
+from embedded_classification_train import DataEntryMethod, readSetting
 
 
 def embeddedCsv(output_root, image_list_path, model_path, num_class, dim_embedded, label_map_dict=None):
@@ -91,8 +88,10 @@ def embeddedCsv(output_root, image_list_path, model_path, num_class, dim_embedde
             embedded.append(model(data).cpu().detach().numpy().copy()[0])
             label.append(int(target))
 
-        return embedded, label
+            if batch_idx % 100 == 0:
+                print(f"calc embedded: {batch_idx}/{len(data_loader)}")
 
+        return embedded, label
 
     train_embedded, train_label = calcEmbedded(model, train_loader)
     valid_embedded, valid_label = calcEmbedded(model, valid_loader)
@@ -116,7 +115,7 @@ def embeddedCsv(output_root, image_list_path, model_path, num_class, dim_embedde
     return output_dir
 
 
-def readEmbedded(csv_path, ):
+def readEmbedded(csv_path, dim_embedded):
     labels = []
     embeddeds = []
     with open(csv_path, "r") as csvfile:
@@ -165,7 +164,7 @@ def remove_value_from_list(lst, value_to_remove):
     return [item for item in lst if item != value_to_remove]
 
 
-def caclAccuracy(label_gt, label_estimation):
+def caclAccuracy(label_gt, label_estimation, num_class):
     accuracy = sklearn.metrics.accuracy_score(label_gt, label_estimation)
     precision = sklearn.metrics.precision_score(label_gt, label_estimation, average=None, labels=[i for i in range(num_class)], zero_division=1) #zero_division=1として対策優先度を下げる
     recall = sklearn.metrics.recall_score(label_gt, label_estimation, average=None, labels=[i for i in range(num_class)], zero_division=1) #zero_division=1として対策優先度を下げる
@@ -174,10 +173,17 @@ def caclAccuracy(label_gt, label_estimation):
     return accuracy, precision, recall, confusion_matrix
 
 
-def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:DataEntryMethod=DataEntryMethod.Sequential, random_seed:int=-1):
+def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:DataEntryMethod=DataEntryMethod.Sequential, random_seed:int=-1, label_name_dict:dict={}, num_class:int=0, dim_embedded:int=256):
     # embeddedの読み込み
-    label_train, embedded_train = readEmbedded(os.path.join(valid_dir, "train_embedded.csv"))
-    label_valid, embedded_valid = readEmbedded(os.path.join(valid_dir, "valid_embedded.csv"))
+    label_train, embedded_train = readEmbedded(os.path.join(valid_dir, "train_embedded.csv"), dim_embedded)
+    label_valid, embedded_valid = readEmbedded(os.path.join(valid_dir, "valid_embedded.csv"), dim_embedded)
+
+    #debug
+    # label_train = label_train[::10]
+    # embedded_train = embedded_train[::10]
+    # label_valid = label_valid[::10]
+    # embedded_valid = embedded_valid[::10]
+
     num_patch = label_valid.shape[0]
     num_object = num_patch // num_patch_per_object
 
@@ -192,15 +198,21 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
             valid_object_patch.append(patches)
             patches = []
 
+
     # 出力ファイルの準備
-    result_csv_path = os.path.join(valid_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S_valid.csv'))
+    result_csv_path = os.path.join(valid_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S_valid') + f"_seed{random_seed}.csv")
     with open(result_csv_path, "w") as f:
         f.write(f"num_patch,{num_patch}\n")
         f.write(f"num_object,{num_object}\n")
+        f.write(f"random_seed,{random_seed}\n")
+        f.write(f"data_entry_method,{data_entry_method}\n")
         f.write("\n")
         f.write(f"num_add,addition_index,addition_class,accuracy_patch,accuracy_object,")
         for iClass in range(num_class):
-            f.write(f"class{iClass}_precision,class{iClass}_recall,")
+            if label_name_dict is None:
+                f.write(f"class{iClass}_precision,class{iClass}_recall,")
+            else:
+                f.write(f"{iClass}_{label_name_dict[iClass]}_precision,{iClass}_{label_name_dict[iClass]}_recall,")
         f.write("\n")
 
     # データを追加しながらkNNで識別
@@ -276,7 +288,7 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
             if (iValid + 1) % num_patch_per_object == 0:
                 estimation_label_per_object.append(majorityVote(vote))
                 vote = []
-        accuracy_object, precision_object, recall_object, confusion_matrix_object = caclAccuracy(valid_object_label, estimation_label_per_object)
+        accuracy_object, precision_object, recall_object, confusion_matrix_object = caclAccuracy(valid_object_label, estimation_label_per_object, num_class)
 
         # ファイル出力
         with open(result_csv_path, "a") as f:
@@ -342,35 +354,23 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
 
 if __name__ == '__main__':
     # 設定を読み込む
-    with open('setting.json', 'r') as f:
-        setting = json.load(f)
+    SETTING_FILE_NAME = 'setting.json'
+    setting = readSetting(SETTING_FILE_NAME)
 
     output_root = setting["common"]["output_root"]
     image_list_path = setting["common"]["image_list_path"]
-    num_class = int(setting["common"]["num_class"])
-    dim_embedded = int(setting["common"]["dim_embedded"])
-    num_patch_per_object = int(setting["common"]["num_patch_per_object"])
-    label_map_dict_raw = setting["common"]["label_map_dict"]
-    label_map_dict = {}
-    for key, value in label_map_dict_raw.items():
-        label_map_dict[int(key)] = value
+    num_class = setting["common"]["num_class"]
+    dim_embedded = setting["common"]["dim_embedded"]
+    num_patch_per_object = setting["common"]["num_patch_per_object"]
+    label_map_dict = setting["common"]["label_map_dict"]
+    label_name_dict = setting["common"]["label_name_dict"]
 
     model_path = setting["valid"]["model_path"]
     use_calculated_embedded = setting["valid"]["use_calculated_embedded"]
     dir_calculated_embedded = setting["valid"]["dir_calculated_embedded"]
-    knn_k = int(setting["valid"]["knn_k"])
+    knn_k = setting["valid"]["knn_k"]
+    random_seed = setting["valid"]["random_seed"]
     data_entry_method = setting["valid"]["data_entry_method"]
-    random_seed = int(setting["valid"]["random_seed"])
-    if data_entry_method == "NotRandomSequential":
-        data_entry_method = DataEntryMethod.NotRandomSequential
-    elif data_entry_method == "Sequential":
-        data_entry_method = DataEntryMethod.Sequential
-    elif data_entry_method == "ClassBreadthFirst":
-        data_entry_method = DataEntryMethod.ClassBreadthFirst
-    elif data_entry_method == "PrecisionRecallBottleneck":
-        data_entry_method = DataEntryMethod.PrecisionRecallBottleneck
-    else:
-        data_entry_method = DataEntryMethod.Sequential
 
     # 埋め込みベクトルを算出
     if use_calculated_embedded:
@@ -381,4 +381,21 @@ if __name__ == '__main__':
         valid_dir = embeddedCsv(output_root, image_list_path, model_path, num_class, dim_embedded, label_map_dict)
 
     # 評価を実行
-    evaluate(valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed)
+    start_time = time.time()
+
+    tasks = []
+    for i in range(setting["valid"]["num_run_valid"]):
+        if random_seed < -1:
+            random_seed = random.randint(0, 100000)
+        # evaluate(valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed + i, label_name_dict, num_class, dim_embedded)
+        tasks.append(Process(target=evaluate, args=(
+            valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed + i, label_name_dict, num_class, dim_embedded
+            )))
+
+    for task in tasks:
+        task.start()
+
+    for task in tasks:
+        task.join()
+
+    print(f"Proctime: {time.time()-start_time} s")

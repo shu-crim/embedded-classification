@@ -370,6 +370,8 @@ if __name__ == '__main__':
     dir_calculated_embedded = setting["valid"]["dir_calculated_embedded"]
     knn_k = setting["valid"]["knn_k"]
     random_seed = setting["valid"]["random_seed"]
+    if random_seed < -1:
+        random_seed = random.randint(0, 100000)
     data_entry_method = setting["valid"]["data_entry_method"]
 
     # 埋め込みベクトルを算出
@@ -383,19 +385,19 @@ if __name__ == '__main__':
     # 評価を実行
     start_time = time.time()
 
-    tasks = []
-    for i in range(setting["valid"]["num_run_valid"]):
-        if random_seed < -1:
-            random_seed = random.randint(0, 100000)
-        # evaluate(valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed + i, label_name_dict, num_class, dim_embedded)
-        tasks.append(Process(target=evaluate, args=(
-            valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed + i, label_name_dict, num_class, dim_embedded
-            )))
+    for round in range(setting["valid"]["round_run_valid"]):
+        tasks = []
+        for i in range(setting["valid"]["num_run_valid"]):
+            # evaluate(valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed + i, label_name_dict, num_class, dim_embedded)
+            tasks.append(Process(target=evaluate, args=(
+                valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed, label_name_dict, num_class, dim_embedded
+                )))
+            random_seed += 1
 
-    for task in tasks:
-        task.start()
+        for task in tasks:
+            task.start()
 
-    for task in tasks:
-        task.join()
+        for task in tasks:
+            task.join()
 
     print(f"Proctime: {time.time()-start_time} s")

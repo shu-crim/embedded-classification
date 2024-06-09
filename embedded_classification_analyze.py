@@ -85,6 +85,9 @@ def AnalyzeResNetModel(output_root, image_list_path, model_path, num_class, num_
             estimation.append(np.argmax(output))
             label.append(int(target))
 
+            if batch_idx % 100 == 0:
+                print(f"estimate: {batch_idx}/{len(data_loader)}")
+
         return estimation, label
 
     train_estimation, train_label = estimate(model, train_loader)

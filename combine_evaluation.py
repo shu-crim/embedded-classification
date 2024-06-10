@@ -52,7 +52,7 @@ if __name__ == '__main__':
     precision_arr = np.average(np.array(precision_list), 0)
     recall_arr = np.average(np.array(recall_list), 0)
 
-    with open(os.path.join(os.path.dirname(stats_csv_dir), "average_" + os.path.basename(stats_csv_dir) + ".csv"), "w", encoding="utf-8") as f:
+    with open(os.path.join(stats_csv_dir, "average_" + os.path.basename(stats_csv_dir) + ".csv"), "w", encoding="utf-8") as f:
         f.write("num_addition,")
         for iClass in range(setting["common"]["num_class"]):
             f.write(f'{iClass}_{setting["common"]["label_name_dict"][iClass]}_precision,{iClass}_{setting["common"]["label_name_dict"][iClass]}_recall,')

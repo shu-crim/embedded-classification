@@ -20,26 +20,7 @@ class TargetObject:
     rect_width: int = 0
     img_data: np.ndarray = None
     file_name: str = ""
-
-
-def load_object_list_from_dir(file_paths, label_map_dict, file_skip=0):
-    object_list = []
-    if file_skip > 0:
-        file_paths = file_paths[::file_skip]
-
-    for path in file_paths:
-        obj = TargetObject()
-        obj.img_data = np.array(Image.open(path))
-
-        genus_number = os.path.basename(path).split(".")[0].split("_")[-1]
-        genus_number = int(genus_number)
-        obj.genus_number = label_map_dict[genus_number] if genus_number in label_map_dict else 0
-
-        obj.file_name = os.path.basename(path)
-
-        object_list.append(obj)
-
-    return object_list
+    feature_descriptor: np.ndarray = None
 
 
 class Stats:
@@ -54,13 +35,42 @@ class Feature(enum.Enum):
     AKAZE = 1
 
 
+def load_object_list_from_dir(file_paths, label_map_dict, file_skip=0, feature:Feature=Feature.AKAZE, feature_skip:int=1):
+    object_list = []
+    if file_skip > 0:
+        file_paths = file_paths[::file_skip]
+
+    for path in file_paths:
+        obj = TargetObject()
+        obj.img_data = np.array(Image.open(path))
+        gray = cv2.cvtColor(obj.img_data[:,:,::-1], cv2.COLOR_BGR2GRAY) 
+        if feature == Feature.AKAZE:
+            akaze = cv2.AKAZE_create() 
+            keypoint, descriptor = akaze.detectAndCompute(gray, None) 
+        elif feature == Feature.ORB:
+            orb = cv2.ORB_create()
+            keypoint, descriptor = orb.detectAndCompute(gray, None)
+        if descriptor is not None:
+            obj.feature_descriptor = descriptor[::feature_skip]
+        else:
+            obj.feature_descriptor = None
+
+        genus_number = os.path.basename(path).split(".")[0].split("_")[-1]
+        genus_number = int(genus_number)
+        obj.genus_number = label_map_dict[genus_number] if genus_number in label_map_dict else 0
+
+        obj.file_name = os.path.basename(path)
+
+        object_list.append(obj)
+
+    return object_list
+
+
 def evaluate(descriptors_learned, field_learn_object_list, result_csv_path:str, overview_csv_path:str, feature:Feature, label_name_dict:dict):
     if feature == Feature.AKAZE:
         bf = cv2.BFMatcher(cv2.NORM_L1)
-        akaze = cv2.AKAZE_create()
     elif feature == Feature.ORB:
         bf = cv2.BFMatcher(cv2.NORM_HAMMING)
-        orb = cv2.ORB_create()
     
     evaluation = {}
     for genus_number in label_name_dict.keys():
@@ -69,19 +79,12 @@ def evaluate(descriptors_learned, field_learn_object_list, result_csv_path:str, 
     # with open(result_csv_path, "w") as fp:
     #     fp.write("filename,genus,estimation,distance\n")
 
+    # start_time = time.time() #処理時間測定開始
     for obj in field_learn_object_list:
         obj:TargetObject = obj
 
-        gray = cv2.cvtColor(obj.img_data[:,:,::-1], cv2.COLOR_BGR2GRAY) 
-
-        # 特徴量抽出
-        if feature == Feature.AKAZE:
-            keypoint, descriptor = akaze.detectAndCompute(gray, None) 
-        elif feature == Feature.ORB:
-            keypoint, descriptor = orb.detectAndCompute(gray, None)
-
         # 識別
-        if descriptor is None:
+        if obj.feature_descriptor is None:
             estimate_genus = 0 # 特徴点が無く識別不能
             min_distance = -1
         else:
@@ -91,7 +94,7 @@ def evaluate(descriptors_learned, field_learn_object_list, result_csv_path:str, 
             for genus_number in descriptors_learned:
                 if descriptors_learned[genus_number].size == 0:
                     continue
-                matches = bf.match(descriptor, descriptors_learned[genus_number])
+                matches = bf.match(obj.feature_descriptor, descriptors_learned[genus_number])
 
                 # matchesをdescriptorsのdistance順(似ている順)にsortする 
                 matches = sorted(matches, key = lambda x:x.distance)
@@ -134,6 +137,8 @@ def evaluate(descriptors_learned, field_learn_object_list, result_csv_path:str, 
         else:
             stats.FN += 1
             evaluation[estimate_genus].FP += 1
+
+    # print(f"evaluate: {time.time() - start_time:0.3} s")
         
     # 評価結果(まとめ)の書き出し
     with open(overview_csv_path, "a") as fp:
@@ -148,17 +153,13 @@ def evaluate(descriptors_learned, field_learn_object_list, result_csv_path:str, 
         fp.write("\n")
 
 
-def total_evaluate(output_dir_root:str, label_map_dict:dict, image_list_path, file_skip:int=1, target_genus_number_list:list=[], feature:Feature=Feature.AKAZE, random_seed:int=-1, feature_skip:int=1, label_name_dict:dict={}):
+def total_evaluate(output_dir:str, label_map_dict:dict, image_list_path, file_skip:int=1, target_genus_number_list:list=[], feature:Feature=Feature.AKAZE, random_seed:int=-1, feature_skip:int=1, label_name_dict:dict={}):
     if len(target_genus_number_list) == 0:
         evaluation_conditions = "_all_images"
     else:
         evaluation_conditions = ""
         for target_genus in target_genus_number_list:
             evaluation_conditions += f"_{label_name_dict[target_genus]}"
-
-    str_date = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(output_dir_root, f"{str_date}_akaze{evaluation_conditions}_seed{random_seed}")
-    os.makedirs(output_dir, exist_ok=True)
 
     # 画像リストを読み込む
     print("loading images...")
@@ -172,25 +173,15 @@ def total_evaluate(output_dir_root:str, label_map_dict:dict, image_list_path, fi
             elif row[0] == "valid":
                 valid_paths.append(os.path.join(os.path.dirname(image_list_path), row[1]))
 
-    # debug
-    # train_paths = train_paths[::50]
-    # valid_paths = valid_paths[::50]
-
     # 画像を読み込む
-    pre_learn_object_list = load_object_list_from_dir(train_paths, label_map_dict, file_skip)
-    field_learn_object_list = load_object_list_from_dir(valid_paths, label_map_dict, file_skip)
+    pre_learn_object_list = load_object_list_from_dir(train_paths, label_map_dict, file_skip, feature, feature_skip)
+    field_learn_object_list = load_object_list_from_dir(valid_paths, label_map_dict, file_skip, feature, feature_skip)
 
     # 現場で学ぶデータをシャッフル
     random.seed(random_seed)
     random.shuffle(field_learn_object_list)
 
     print("Images have loaded.")
-
-    if feature == Feature.AKAZE:
-        # AKAZE検出器の生成
-        akaze = cv2.AKAZE_create() 
-    elif feature == Feature.ORB:
-        orb = cv2.ORB_create()
 
     # 事前学習データから特徴量を抽出してリスト化
     print("Calculating Pre-Learning descriptor...")
@@ -199,23 +190,10 @@ def total_evaluate(output_dir_root:str, label_map_dict:dict, image_list_path, fi
         descriptors_learned[genus_number] = []
 
     for obj in pre_learn_object_list:
+        # 特徴量を登録
         obj:TargetObject = obj
-
-        gray = cv2.cvtColor(obj.img_data[:,:,::-1], cv2.COLOR_BGR2GRAY) 
-
-        # 特徴量抽出
-        if feature == Feature.AKAZE:
-            keypoint, descriptor = akaze.detectAndCompute(gray, None) 
-        elif feature == Feature.ORB:
-            keypoint, descriptor = orb.detectAndCompute(gray, None)
-
-        if descriptor is None:
-            continue
-
-        # 特徴量を間引く
-        descriptor = descriptor[::feature_skip]
-
-        descriptors_learned[obj.genus_number] += descriptor.tolist()
+        if obj.feature_descriptor is not None:
+            descriptors_learned[obj.genus_number] += obj.feature_descriptor.tolist()
 
     for key in descriptors_learned:
         print(f"genus:{key}, num:{len(descriptors_learned[key])}")
@@ -225,8 +203,10 @@ def total_evaluate(output_dir_root:str, label_map_dict:dict, image_list_path, fi
     print("Estimation starts.")
 
     # 結果のまとめcsvを作成
+    result_csv_path = os.path.join(output_dir, f"result_overview_seed{random_seed}.csv")
+
     num_field_learn_img = 0
-    with open(os.path.join(output_dir, "result_overview.csv"), "w") as fp:
+    with open(result_csv_path, "w", encoding="utf-8") as fp:
         fp.write("\n")
         fp.write(f"num_object,{len(field_learn_object_list)}\n")
         fp.write(f"random_seed,{random_seed}\n")
@@ -242,11 +222,13 @@ def total_evaluate(output_dir_root:str, label_map_dict:dict, image_list_path, fi
         fp.write("\n")
 
     # 初期状態での評価
-    with open(os.path.join(output_dir, "result_overview.csv"), "a") as fp:
+    with open(result_csv_path, "a") as fp:
         fp.write("0,-,-,-,-,")
-    evaluate(descriptors_learned, field_learn_object_list, os.path.join(output_dir, f"result_{num_field_learn_img:0>8}_images_learned.csv"), os.path.join(output_dir, "result_overview.csv"), feature, label_name_dict)
+    evaluate(descriptors_learned, field_learn_object_list, os.path.join(output_dir, f"result_{num_field_learn_img:0>8}_images_learned.csv"), result_csv_path, feature, label_name_dict)
 
     for obj in field_learn_object_list:
+        start_time = time.time() #処理時間測定開始
+    
         obj:TargetObject = obj
 
         # 特定の属のみ学習していく
@@ -257,26 +239,17 @@ def total_evaluate(output_dir_root:str, label_map_dict:dict, image_list_path, fi
         print(f"learn: {obj.file_name}")
         num_field_learn_img += 1
 
-        gray = cv2.cvtColor(obj.img_data[:,:,::-1], cv2.COLOR_BGR2GRAY) 
-
-        # 特徴量抽出
-        if feature == Feature.AKAZE:
-            keypoint, descriptor = akaze.detectAndCompute(gray, None) 
-        elif feature == Feature.ORB:
-            keypoint, descriptor = orb.detectAndCompute(gray, None)
-        
-        if descriptor is not None:
-            # 特徴量を間引く
-            descriptor = descriptor[::feature_skip]
-
+        if obj.feature_descriptor is not None:
             descriptors_list = descriptors_learned[obj.genus_number].tolist() # 一旦listに変換
-            descriptors_list += descriptor.tolist() # 特徴量を追加
+            descriptors_list += obj.feature_descriptor.tolist() # 特徴量を追加
             descriptors_learned[obj.genus_number] = np.array(descriptors_list, dtype=np.uint8) # 再びnumpyへ
         
             # 評価
-            with open(os.path.join(output_dir, "result_overview.csv"), "a") as fp:
+            with open(result_csv_path, "a") as fp:
                 fp.write(f"{num_field_learn_img},{obj.file_name},{obj.genus_number},-,-,")
-            evaluate(descriptors_learned, field_learn_object_list, os.path.join(output_dir, f"result_{num_field_learn_img:0>8}_images_learned.csv"), os.path.join(output_dir, "result_overview.csv"), feature, label_name_dict)
+            evaluate(descriptors_learned, field_learn_object_list, os.path.join(output_dir, f"result_{num_field_learn_img:0>8}_images_learned.csv"), result_csv_path, feature, label_name_dict)
+
+        print(f"1 step: {time.time() - start_time:0.3} s")
 
 
 def writeFeatureVector(output_root, label_map_dict, label_name_dict, image_list_path, feature, file_skip):
@@ -348,11 +321,15 @@ def main():
     SETTING_FILE_NAME = 'setting.json'
     setting = readSetting(SETTING_FILE_NAME)
     random_seed = setting["valid"]["random_seed"]
-    feature_skip = 5
+    feature_skip = 10
 
     # 特徴量の抽出数を書き出し
     # writeFeatureVector(setting["common"]["output_root"], setting["common"]["label_map_dict"], setting["common"]["label_name_dict"], setting["common"]["image_list_path"], Feature.AKAZE, file_skip=1)
     # exit()
+
+    str_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(setting["common"]["output_root"], f"{str_date}_akaze")
+    os.makedirs(output_dir, exist_ok=True)
 
     # 評価
     start_time = time.time()
@@ -364,7 +341,7 @@ def main():
                 random_seed = random.randint(0, 100000)
 
             tasks.append(Process(target=total_evaluate, args=(
-                setting["common"]["output_root"], setting["common"]["label_map_dict"], setting["common"]["image_list_path"], setting["common"]["num_patch_per_object"], [], Feature.AKAZE, random_seed, feature_skip, setting["common"]["label_name_dict"]
+                output_dir, setting["common"]["label_map_dict"], setting["common"]["image_list_path"], setting["common"]["num_patch_per_object"], [], Feature.AKAZE, random_seed, feature_skip, setting["common"]["label_name_dict"]
                 )))
             
             random_seed += 1

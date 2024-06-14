@@ -23,36 +23,16 @@ import time
 from embedded_classification_train import DataEntryMethod, readSetting
 
 
+SETTING_FILE_NAME = 'setting.json'
+
 def embeddedCsv(output_root, image_list_path, model_path, num_class, dim_embedded, label_map_dict=None):
     # output
     now = datetime.datetime.now()
     output_dir = os.path.join(output_root, now.strftime('%Y%m%d_%H%M%S_valid_' + os.path.basename(image_list_path).replace(".csv", "")))
     os.makedirs(output_dir)
     shutil.copy(os.path.abspath(__file__), output_dir)
-
-    # モデル読み込み
-    model = torchvision.models.resnet50()
-    model.fc = nn.Sequential(
-        torch.nn.Linear(model.fc.in_features, dim_embedded),
-        torch.nn.Linear(dim_embedded, num_class)
-    )
-    model.load_state_dict(torch.load(model_path))
-
-    # 最終層の取り外し
-    model.fc[1] = torch.nn.Identity()
-
-    # モデル情報の保存
-    with open(os.path.join(output_dir, "network.txt"), "w") as f:
-        original_stdout = sys.stdout # 標準出力の現在の状態を保存
-        sys.stdout = f # 標準出力をファイルにリダイレクト
-        print(model)
-        torchinfo.summary(
-                model,
-                input_size=(1, 3, 224, 224),
-                col_names=["output_size", "num_params"],
-            )
-        sys.stdout = original_stdout # 標準出力を元に戻す
-
+    shutil.copy(SETTING_FILE_NAME, output_dir)
+    shutil.copy(model_path, output_dir)
 
     # 画像リストを読み込む
     train_paths = []
@@ -72,6 +52,29 @@ def embeddedCsv(output_root, image_list_path, model_path, num_class, dim_embedde
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=False)
     valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=1, shuffle=False)
+
+    # モデル読み込み
+    model = torchvision.models.resnet50()
+    model.fc = nn.Sequential(
+        torch.nn.Linear(model.fc.in_features, dim_embedded),
+        torch.nn.Linear(dim_embedded, train_dataset.expand_class_num)
+    )
+    model.load_state_dict(torch.load(model_path))
+
+    # 最終層の取り外し
+    model.fc[1] = torch.nn.Identity()
+
+    # モデル情報の保存
+    with open(os.path.join(output_dir, "network.txt"), "w") as f:
+        original_stdout = sys.stdout # 標準出力の現在の状態を保存
+        sys.stdout = f # 標準出力をファイルにリダイレクト
+        print(model)
+        torchinfo.summary(
+                model,
+                input_size=(1, 3, 224, 224),
+                col_names=["output_size", "num_params"],
+            )
+        sys.stdout = original_stdout # 標準出力を元に戻す
 
     # 埋め込みベクトルを取得する
     device = torch.device('cuda')
@@ -248,54 +251,55 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
         knn = cv2.ml.KNearest_create()
         knn.train(embedded_train, cv2.ml.ROW_SAMPLE, label_train)
 
-        # Validデータの識別
-        ret, results, neighbours, dist = knn.findNearest(embedded_valid, K)
-        label_estimation = results.reshape(label_valid.shape[0]).astype(int)
+        if iValidObject % 10 == 0 or iValidObject == num_object:
+            # Validデータの識別
+            ret, results, neighbours, dist = knn.findNearest(embedded_valid, K)
+            label_estimation = results.reshape(label_valid.shape[0]).astype(int)
 
-        # 識別対象のデータ(のインデックス)ごとに、どのGTクラスがどのクラスに識別されたかリスト化
-        if data_entry_method == DataEntryMethod.PrecisionRecallBottleneck:
-            confusion_matrix_valid_index = [[[] for i in range(num_class)] for j in range(num_class)]
-            confusion_matrix_debug = [[0 for i in range(num_class)] for j in range(num_class)]
-            for i in range(len(results)):
-                confusion_matrix_valid_index[label_valid[i]][label_estimation[i]].append(i // num_patch_per_object) # 追加するindexはオブジェクトindexへと変換
-                confusion_matrix_debug[label_valid[i]][label_estimation[i]] += 1
+            # 識別対象のデータ(のインデックス)ごとに、どのGTクラスがどのクラスに識別されたかリスト化
+            if data_entry_method == DataEntryMethod.PrecisionRecallBottleneck:
+                confusion_matrix_valid_index = [[[] for i in range(num_class)] for j in range(num_class)]
+                confusion_matrix_debug = [[0 for i in range(num_class)] for j in range(num_class)]
+                for i in range(len(results)):
+                    confusion_matrix_valid_index[label_valid[i]][label_estimation[i]].append(i // num_patch_per_object) # 追加するindexはオブジェクトindexへと変換
+                    confusion_matrix_debug[label_valid[i]][label_estimation[i]] += 1
 
-        # 1データごとの詳細情報
-        # now = datetime.datetime.now()
-        # with open(os.path.join(valid_dir, now.strftime('%Y%m%d_%H%M%S_valid_detail.csv')), "w") as f:
-        #     f.write("gt_label,est_label,")
-        #     for k in range(K):
-        #         f.write(f"neighbor_{k+1},")
-        #     for k in range(K):
-        #         f.write(f"distance_{k+1},")
-        #     f.write("\n")
-        #     for iValid in range(len(label_valid)):
-        #         f.write(f"{label_valid[iValid]},{label_estimation[iValid]},")
-        #         for k in range(K):
-        #             f.write(f"{neighbours[iValid][k]},")
-        #         for k in range(K):
-        #             f.write(f"{dist[iValid][k]},")
-        #         f.write("\n")
+            # 1データごとの詳細情報
+            # now = datetime.datetime.now()
+            # with open(os.path.join(valid_dir, now.strftime('%Y%m%d_%H%M%S_valid_detail.csv')), "w") as f:
+            #     f.write("gt_label,est_label,")
+            #     for k in range(K):
+            #         f.write(f"neighbor_{k+1},")
+            #     for k in range(K):
+            #         f.write(f"distance_{k+1},")
+            #     f.write("\n")
+            #     for iValid in range(len(label_valid)):
+            #         f.write(f"{label_valid[iValid]},{label_estimation[iValid]},")
+            #         for k in range(K):
+            #             f.write(f"{neighbours[iValid][k]},")
+            #         for k in range(K):
+            #             f.write(f"{dist[iValid][k]},")
+            #         f.write("\n")
 
-        # each patch
-        accuracy_patch = np.sum(label_estimation == label_valid) / num_patch
+            # each patch
+            accuracy_patch = np.sum(label_estimation == label_valid) / num_patch
 
-        # each object
-        estimation_label_per_object = []
-        vote = []
-        for iValid in range(len(label_valid)):
-            vote.append(label_estimation[iValid])
-            if (iValid + 1) % num_patch_per_object == 0:
-                estimation_label_per_object.append(majorityVote(vote))
-                vote = []
-        accuracy_object, precision_object, recall_object, confusion_matrix_object = caclAccuracy(valid_object_label, estimation_label_per_object, num_class)
+            # each object
+            estimation_label_per_object = []
+            vote = []
+            for iValid in range(len(label_valid)):
+                vote.append(label_estimation[iValid])
+                if (iValid + 1) % num_patch_per_object == 0:
+                    estimation_label_per_object.append(majorityVote(vote))
+                    vote = []
+            accuracy_object, precision_object, recall_object, confusion_matrix_object = caclAccuracy(valid_object_label, estimation_label_per_object, num_class)
 
-        # ファイル出力
-        with open(result_csv_path, "a") as f:
-            f.write(f"{iValidObject},{'-' if iValidObject==0 else addition_indices[iValidObject-1]},{'-' if iValidObject==0 else valid_object_label[addition_indices[iValidObject-1]]},{accuracy_patch},{accuracy_object},")
-            for iClass in range(num_class):
-                f.write(f"{precision_object[iClass]},{recall_object[iClass]},")
-            f.write("\n")
+            # ファイル出力
+            with open(result_csv_path, "a") as f:
+                f.write(f"{iValidObject},{'-' if iValidObject==0 else addition_indices[iValidObject-1]},{'-' if iValidObject==0 else valid_object_label[addition_indices[iValidObject-1]]},{accuracy_patch},{accuracy_object},")
+                for iClass in range(num_class):
+                    f.write(f"{precision_object[iClass]},{recall_object[iClass]},")
+                f.write("\n")
 
         # trainデータの追加
         if iValidObject < num_object:
@@ -354,7 +358,6 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
 
 if __name__ == '__main__':
     # 設定を読み込む
-    SETTING_FILE_NAME = 'setting.json'
     setting = readSetting(SETTING_FILE_NAME)
 
     output_root = setting["common"]["output_root"]

@@ -37,12 +37,15 @@ def loadDataset(image_list_path, label_map_dict=None):
     return train_dataset, val_dataset
 
 
-def train(num_epoch, output_dir, num_class, dim_embedded=256):
+def train(train_dataset, val_dataset, num_epoch, output_dir, num_class, dim_embedded=256):
+    # 拡張されたクラス数
+    expand_num_class = train_dataset.expand_class_num
+
     # モデル作成
     model = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
     model.fc = nn.Sequential(
         torch.nn.Linear(model.fc.in_features, dim_embedded),
-        torch.nn.Linear(dim_embedded, num_class)
+        torch.nn.Linear(dim_embedded, expand_num_class)
     )
 
     # モデル設計の出力
@@ -108,7 +111,7 @@ def train(num_epoch, output_dir, num_class, dim_embedded=256):
 
         # debug
         data = data.cpu().detach().numpy().copy()
-        for i in range(min(5, data.shape[0])):
+        for i in range(min(1, data.shape[0])):
             Image.fromarray((data[i,:].transpose(1,2,0) * 255).astype(np.uint8)).save(
                 os.path.join(output_dir, f"train_{epoch:06}_{i:02}.png"))
                 
@@ -228,4 +231,4 @@ if __name__ == '__main__':
     shutil.copy(SETTING_FILE_NAME, output_dir)
 
     # train実行
-    train(num_epoch=50, output_dir=output_dir, num_class=num_class, dim_embedded=dim_embedded)
+    train(train_dataset, val_dataset, num_epoch=50, output_dir=output_dir, num_class=num_class, dim_embedded=dim_embedded)

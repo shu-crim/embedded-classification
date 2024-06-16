@@ -320,7 +320,7 @@ def main():
     # 設定を読み込む
     SETTING_FILE_NAME = 'setting.json'
     setting = readSetting(SETTING_FILE_NAME)
-    random_seed = setting["valid"]["random_seed"]
+    random_seed = setting["common"]["random_seed"]
     feature_skip = 10
 
     # 特徴量の抽出数を書き出し

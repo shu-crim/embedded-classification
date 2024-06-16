@@ -176,7 +176,9 @@ def caclAccuracy(label_gt, label_estimation, num_class):
     return accuracy, precision, recall, confusion_matrix
 
 
-def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:DataEntryMethod=DataEntryMethod.Sequential, random_seed:int=-1, label_name_dict:dict={}, num_class:int=0, dim_embedded:int=256):
+def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:DataEntryMethod=DataEntryMethod.Sequential, random_seed:int=-1, label_name_dict:dict={}, num_class:int=0, dim_embedded:int=256, valid_skip=1):
+    cv2.setNumThreads(1)
+
     # embeddedの読み込み
     label_train, embedded_train = readEmbedded(os.path.join(valid_dir, "train_embedded.csv"), dim_embedded)
     label_valid, embedded_valid = readEmbedded(os.path.join(valid_dir, "valid_embedded.csv"), dim_embedded)
@@ -247,17 +249,17 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
 
     # 評価と登録のループ
     for iValidObject in range(num_object + 1):
-        # Trainデータの登録
-        knn = cv2.ml.KNearest_create()
-        knn.train(embedded_train, cv2.ml.ROW_SAMPLE, label_train)
+        if valid_skip <= 1 or iValidObject % valid_skip == 0 or iValidObject == num_object:
+            # Trainデータの登録
+            knn = cv2.ml.KNearest_create()
+            knn.train(embedded_train, cv2.ml.ROW_SAMPLE, label_train)
 
-        if iValidObject % 10 == 0 or iValidObject == num_object:
             # Validデータの識別
             ret, results, neighbours, dist = knn.findNearest(embedded_valid, K)
             label_estimation = results.reshape(label_valid.shape[0]).astype(int)
 
             # 識別対象のデータ(のインデックス)ごとに、どのGTクラスがどのクラスに識別されたかリスト化
-            if data_entry_method == DataEntryMethod.PrecisionRecallBottleneck:
+            if data_entry_method == DataEntryMethod.Bottleneck:
                 confusion_matrix_valid_index = [[[] for i in range(num_class)] for j in range(num_class)]
                 confusion_matrix_debug = [[0 for i in range(num_class)] for j in range(num_class)]
                 for i in range(len(results)):
@@ -307,7 +309,7 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
             addition_index = addition_indices[iValidObject]
 
             # P/Rのボトルネックへ対処するデータを登録
-            if data_entry_method == DataEntryMethod.PrecisionRecallBottleneck:
+            if data_entry_method == DataEntryMethod.Bottleneck:
                 # Recallが最も低いクラスのデータを選択
                 recall_object[np.isnan(recall_object)] = 2. # nanのクラスは無視
                 while True:
@@ -372,8 +374,8 @@ if __name__ == '__main__':
     use_calculated_embedded = setting["valid"]["use_calculated_embedded"]
     dir_calculated_embedded = setting["valid"]["dir_calculated_embedded"]
     knn_k = setting["valid"]["knn_k"]
-    random_seed = setting["valid"]["random_seed"]
-    if random_seed < -1:
+    random_seed = setting["common"]["random_seed"]
+    if random_seed < 0:
         random_seed = random.randint(0, 100000)
     data_entry_method = setting["valid"]["data_entry_method"]
 
@@ -391,9 +393,8 @@ if __name__ == '__main__':
     for round in range(setting["valid"]["round_run_valid"]):
         tasks = []
         for i in range(setting["valid"]["num_run_valid"]):
-            # evaluate(valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed + i, label_name_dict, num_class, dim_embedded)
             tasks.append(Process(target=evaluate, args=(
-                valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed, label_name_dict, num_class, dim_embedded
+                valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed, label_name_dict, num_class, dim_embedded, setting["valid"]["valid_skip"]
                 )))
             random_seed += 1
 

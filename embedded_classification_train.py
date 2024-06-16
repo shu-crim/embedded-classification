@@ -10,6 +10,8 @@ import shutil
 import csv
 import json
 from enum import Enum
+import random
+from multiprocessing import Process
 
 import torch.nn as nn
 import torch.optim as optim
@@ -17,6 +19,20 @@ import torch.optim as optim
 import sklearn.metrics
 
 from module.dataset import MyDataSet
+
+
+
+def fix_seed(seed=0):
+    # random
+    random.seed(seed)
+
+    # Numpy
+    np.random.seed(seed)
+
+    # Pytorch
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
 
 
 def loadDataset(image_list_path, label_map_dict=None):
@@ -31,13 +47,16 @@ def loadDataset(image_list_path, label_map_dict=None):
             elif row[0] == "valid":
                 valid_paths.append(os.path.join(os.path.dirname(image_list_path), row[1]))
 
-    train_dataset = MyDataSet(train_paths, random_rotate=True, label_map_dict=label_map_dict)
-    val_dataset = MyDataSet(valid_paths, label_map_dict=label_map_dict)
+    train_dataset = MyDataSet(train_paths, random_rotate=True, label_map_dict=label_map_dict, exclude_unsupervised_label=False)
+    val_dataset = MyDataSet(valid_paths, label_map_dict=label_map_dict, exclude_unsupervised_label=False)
 
     return train_dataset, val_dataset
 
 
-def train(train_dataset, val_dataset, num_epoch, output_dir, num_class, dim_embedded=256):
+def train(num_epoch, output_dir, num_class, dim_embedded, train_dataset, val_dataset, random_seed):
+    # seed設定
+    fix_seed(random_seed)
+
     # 拡張されたクラス数
     expand_num_class = train_dataset.expand_class_num
 
@@ -61,8 +80,8 @@ def train(train_dataset, val_dataset, num_epoch, output_dir, num_class, dim_embe
         sys.stdout = original_stdout # 標準出力を元に戻す
 
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=2, persistent_workers=True, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=2, persistent_workers=True, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=2, persistent_workers=True)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=2, persistent_workers=True)
 
     torch.backends.cudnn.benchmark = True
     device = torch.device('cuda')
@@ -163,7 +182,7 @@ class DataEntryMethod(Enum):
     NotRandomSequential = 1, # データセットの順でそのまま登録
     Sequential = 2, # ランダムな順で登録
     ClassBreadthFirst = 3, # 各クラスを横断的な順で登録
-    PrecisionRecallBottleneck = 4, # P/Rが最低値なクラスについてP/Rを上げるデータを動的に選択して登録(Recallを上げる際のデータ選択はランダム)
+    Bottleneck = 4, # P/Rが最低値なクラスについてP/Rを上げるデータを動的に選択して登録(Recallを上げる際のデータ選択はランダム)
 
 def readSetting(path = 'setting.json'):
     # 設定を読み込む
@@ -173,6 +192,7 @@ def readSetting(path = 'setting.json'):
     setting["common"]["num_class"] = num_class = int(setting["common"]["num_class"])
     setting["common"]["dim_embedded"] = int(setting["common"]["dim_embedded"])
     setting["common"]["num_patch_per_object"] = int(setting["common"]["num_patch_per_object"])
+    setting["common"]["random_seed"] = int(setting["common"]["random_seed"])
 
     label_map_dict_raw = setting["common"]["label_map_dict"]
     setting["common"]["label_map_dict"] = {}
@@ -184,10 +204,14 @@ def readSetting(path = 'setting.json'):
     for key, value in label_name_dict.items():
         setting["common"]["label_name_dict"][int(key)] = value
 
+    setting["train"]["num_epoch"] = int(setting["train"]["num_epoch"])
+    setting["train"]["num_run_train"] = int(setting["train"]["num_run_train"])
+    setting["train"]["round_run_train"] = int(setting["train"]["round_run_train"])
+
     setting["valid"]["knn_k"] = int(setting["valid"]["knn_k"])
-    setting["valid"]["random_seed"] = int(setting["valid"]["random_seed"])
     setting["valid"]["num_run_valid"] = int(setting["valid"]["num_run_valid"])
     setting["valid"]["round_run_valid"] = int(setting["valid"]["round_run_valid"])
+    setting["valid"]["valid_skip"] = int(setting["valid"]["valid_skip"])
 
     data_entry_method = setting["valid"]["data_entry_method"]
     if data_entry_method == "NotRandomSequential":
@@ -196,8 +220,8 @@ def readSetting(path = 'setting.json'):
         setting["valid"]["data_entry_method"] = DataEntryMethod.Sequential
     elif data_entry_method == "ClassBreadthFirst":
         setting["valid"]["data_entry_method"] = DataEntryMethod.ClassBreadthFirst
-    elif data_entry_method == "PrecisionRecallBottleneck":
-        setting["valid"]["data_entry_method"] = DataEntryMethod.PrecisionRecallBottleneck
+    elif data_entry_method == "Bottleneck":
+        setting["valid"]["data_entry_method"] = DataEntryMethod.Bottleneck
     else:
         setting["valid"]["data_entry_method"] = DataEntryMethod.Sequential
 
@@ -210,25 +234,35 @@ def readSetting(path = 'setting.json'):
 if __name__ == '__main__':
     SETTING_FILE_NAME = 'setting.json'
     setting = readSetting(SETTING_FILE_NAME)
-
-    output_root = setting["common"]["output_root"]
-    image_list_path = setting["common"]["image_list_path"]
-    num_class = setting["common"]["num_class"]
-    dim_embedded = setting["common"]["dim_embedded"]
-    label_map_dict = setting["common"]["label_map_dict"]
+    random_seed = setting["common"]["random_seed"]
+    if random_seed < 0:
+        random_seed = random.randint(0, 100000)
 
     # データセット作成
-    train_dataset, val_dataset = loadDataset(image_list_path, label_map_dict)
+    train_dataset, val_dataset = loadDataset(setting["common"]["image_list_path"], setting["common"]["label_map_dict"])
+    
     print(f"train_dataset: {len(train_dataset)}")
     print(f"val_dataset: {len(val_dataset)}")
 
-    # outputディレクトリ作成
-    now = datetime.datetime.now()
-    output_dir = os.path.join(output_root, now.strftime('%Y%m%d_%H%M%S_train') + f"_{os.path.basename(image_list_path).split('.')[0]}")
-    os.makedirs(output_dir)
-    shutil.copy(os.path.abspath(__file__), output_dir)
-    shutil.copy(image_list_path, output_dir)
-    shutil.copy(SETTING_FILE_NAME, output_dir)
+    for round in range(setting["train"]["round_run_train"]):
+        tasks = []
+        for i in range(setting["train"]["num_run_train"]):
+            # outputディレクトリ作成
+            now = datetime.datetime.now()
+            output_dir = os.path.join(setting["common"]["output_root"], now.strftime('%Y%m%d_%H%M%S_train') + f'_{os.path.basename(setting["common"]["image_list_path"]).split(".")[0]}_seed{random_seed}')
+            os.makedirs(output_dir)
+            shutil.copy(os.path.abspath(__file__), output_dir)
+            shutil.copy(setting["common"]["image_list_path"], output_dir)
+            shutil.copy(SETTING_FILE_NAME, output_dir)
 
-    # train実行
-    train(train_dataset, val_dataset, num_epoch=50, output_dir=output_dir, num_class=num_class, dim_embedded=dim_embedded)
+            tasks.append(Process(target=train, args=(
+                setting["train"]["num_epoch"], output_dir, setting["common"]["num_class"], setting["common"]["dim_embedded"], train_dataset, val_dataset, random_seed
+                )))
+            random_seed += 1
+
+        for task in tasks:
+            task.start()
+
+        for task in tasks:
+            task.join()
+

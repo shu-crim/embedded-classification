@@ -5,6 +5,7 @@
         "num_class": 3,
         "dim_embedded": 256,
         "num_patch_per_object": 5,
+        "random_seed": 0,
         "label_map_dict": {
             "1": 1,
             "2": 2
@@ -21,6 +22,10 @@
     },
 
     "train":{
+        "loss_weight": [1,1],
+        "num_epoch": 10,
+        "num_run_train": 2,
+        "round_run_train": 2
     },
 
     "valid":{
@@ -35,7 +40,8 @@
     },
 
     "combine":{
-        "stats_csv_dir": "./output/hoge",
+        "glob_path": "./output/hoge/*.csv",
+        "output_dir": "./output/hoge",
         "stats_start_row": 6,
         "stats_start_col": 5
     }

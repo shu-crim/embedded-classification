@@ -21,6 +21,7 @@ import sklearn.metrics
 from module.dataset import MyDataSet
 
 
+SETTING_FILE_NAME = 'setting.json'
 
 def fix_seed(seed=0):
     # random
@@ -232,7 +233,6 @@ def readSetting(path = 'setting.json'):
 
 
 if __name__ == '__main__':
-    SETTING_FILE_NAME = 'setting.json'
     setting = readSetting(SETTING_FILE_NAME)
     random_seed = setting["common"]["random_seed"]
     if random_seed < 0:

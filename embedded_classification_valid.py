@@ -176,11 +176,15 @@ def caclAccuracy(label_gt, label_estimation, num_class):
     return accuracy, precision, recall, confusion_matrix
 
 
-def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:DataEntryMethod=DataEntryMethod.Sequential, random_seed:int=-1, label_name_dict:dict={}, num_class:int=0, dim_embedded:int=256, valid_skip=1):
+def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:DataEntryMethod=DataEntryMethod.Sequential, random_seed:int=-1, label_name_dict:dict={}, num_class:int=0, dim_embedded:int=256, valid_skip=1, entry_train_data=True):
     cv2.setNumThreads(1)
 
     # embeddedの読み込み
-    label_train, embedded_train = readEmbedded(os.path.join(valid_dir, "train_embedded.csv"), dim_embedded)
+    if entry_train_data:
+        label_train, embedded_train = readEmbedded(os.path.join(valid_dir, "train_embedded.csv"), dim_embedded)
+    else:
+        label_train = np.zeros((0), int)
+        embedded_train = np.zeros((0, dim_embedded), np.float32)
     label_valid, embedded_valid = readEmbedded(os.path.join(valid_dir, "valid_embedded.csv"), dim_embedded)
 
     #debug
@@ -202,7 +206,6 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
             valid_object_label.append(label_valid[iValid])
             valid_object_patch.append(patches)
             patches = []
-
 
     # 出力ファイルの準備
     result_csv_path = os.path.join(valid_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S_valid') + f"_seed{random_seed}.csv")
@@ -250,13 +253,17 @@ def evaluate(valid_dir, num_patch_per_object:int, K:int=1, data_entry_method:Dat
     # 評価と登録のループ
     for iValidObject in range(num_object + 1):
         if valid_skip <= 1 or iValidObject % valid_skip == 0 or iValidObject == num_object:
-            # Trainデータの登録
-            knn = cv2.ml.KNearest_create()
-            knn.train(embedded_train, cv2.ml.ROW_SAMPLE, label_train)
+            if len(label_train) > 0:
+                # Trainデータの登録
+                knn = cv2.ml.KNearest_create()
+                knn.train(embedded_train, cv2.ml.ROW_SAMPLE, label_train)
 
-            # Validデータの識別
-            ret, results, neighbours, dist = knn.findNearest(embedded_valid, K)
-            label_estimation = results.reshape(label_valid.shape[0]).astype(int)
+                # Validデータの識別
+                ret, results, neighbours, dist = knn.findNearest(embedded_valid, K)
+                label_estimation = results.reshape(label_valid.shape[0]).astype(int)
+            else:
+                # Validデータの識別結果はすべてclass0
+                label_estimation = np.zeros((label_valid.shape[0]), int)
 
             # 識別対象のデータ(のインデックス)ごとに、どのGTクラスがどのクラスに識別されたかリスト化
             if data_entry_method == DataEntryMethod.Bottleneck:
@@ -394,7 +401,7 @@ if __name__ == '__main__':
         tasks = []
         for i in range(setting["valid"]["num_run_valid"]):
             tasks.append(Process(target=evaluate, args=(
-                valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed, label_name_dict, num_class, dim_embedded, setting["valid"]["valid_skip"]
+                valid_dir, num_patch_per_object, knn_k, data_entry_method, random_seed, label_name_dict, num_class, dim_embedded, setting["valid"]["valid_skip"], setting["valid"]["entry_train_data"]
                 )))
             random_seed += 1
 

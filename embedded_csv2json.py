@@ -38,6 +38,8 @@ if __name__ == '__main__':
     # データ成形
     goal_rate = 0.6
     output_data = {}
+    output_data["settings"] = {"class_name": setting["common"]["label_name_dict"]}
+    
     output_data["data"] = [{}]
     output_data["data"][0]["vector"] = embedded_valid.tolist()
     output_data["data"][0]["gt"] = label_valid.tolist()
